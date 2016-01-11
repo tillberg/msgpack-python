@@ -667,7 +667,7 @@ static inline int msgpack_pack_raw(msgpack_packer* x, size_t l)
     if (l < 32) {
         unsigned char d = 0xa0 | (uint8_t)l;
         msgpack_pack_append_buffer(x, &TAKE8_8(d), 1);
-    } else if (x->use_bin_type && l < 256) {  // str8 is new format introduced with bin.
+    } else if ((x->force_str_type || x->use_bin_type) && l < 256) {  // str8 is new format introduced with bin.
         unsigned char buf[2] = {0xd9, (uint8_t)l};
         msgpack_pack_append_buffer(x, buf, 2);
     } else if (l < 65536) {
@@ -686,7 +686,7 @@ static inline int msgpack_pack_raw(msgpack_packer* x, size_t l)
  */
 static inline int msgpack_pack_bin(msgpack_packer *x, size_t l)
 {
-    if (!x->use_bin_type) {
+    if (x->force_str_type || !x->use_bin_type) {
         return msgpack_pack_raw(x, l);
     }
     if (l < 256) {

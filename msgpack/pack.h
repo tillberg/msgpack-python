@@ -35,6 +35,7 @@ typedef struct msgpack_packer {
     size_t length;
     size_t buf_size;
     bool use_bin_type;
+    bool force_str_type;
 } msgpack_packer;
 
 typedef struct Packer Packer;

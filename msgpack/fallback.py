@@ -609,12 +609,15 @@ class Packer(object):
     :param bool use_bin_type:
         Use bin type introduced in msgpack spec 2.0 for bytes.
         It also enable str8 type for unicode.
+    :param bool force_str_type:
+        Use str* encoding in place of bin* encoding. Also enable str8.
     """
     def __init__(self, default=None, encoding='utf-8', unicode_errors='strict',
-                 use_single_float=False, autoreset=True, use_bin_type=False):
+                 use_single_float=False, autoreset=True, use_bin_type=False, force_str_type=False):
         self._use_float = use_single_float
         self._autoreset = autoreset
         self._use_bin_type = use_bin_type
+        self._force_str_type = force_str_type
         self._encoding = encoding
         self._unicode_errors = unicode_errors
         self._buffer = StringIO()
@@ -660,7 +663,7 @@ class Packer(object):
                     default_used = True
                     continue
                 raise PackValueError("Integer value out of range")
-            if self._use_bin_type and isinstance(obj, bytes):
+            if (not self._force_str_type) and self._use_bin_type and isinstance(obj, bytes):
                 n = len(obj)
                 if n <= 0xff:
                     self._buffer.write(struct.pack('>BB', 0xc4, n))
@@ -681,7 +684,7 @@ class Packer(object):
                 n = len(obj)
                 if n <= 0x1f:
                     self._buffer.write(struct.pack('B', 0xa0 + n))
-                elif self._use_bin_type and n <= 0xff:
+                elif (self._force_str_type or self._use_bin_type) and n <= 0xff:
                     self._buffer.write(struct.pack('>BB', 0xd9, n))
                 elif n <= 0xffff:
                     self._buffer.write(struct.pack(">BH", 0xda, n))

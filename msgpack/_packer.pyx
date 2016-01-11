@@ -16,6 +16,7 @@ cdef extern from "pack.h":
         size_t length
         size_t buf_size
         bint use_bin_type
+        bint force_str_type
 
     int msgpack_pack_int(msgpack_packer* pk, int d)
     int msgpack_pack_nil(msgpack_packer* pk)
@@ -63,6 +64,8 @@ cdef class Packer(object):
     :param bool use_bin_type:
         Use bin type introduced in msgpack spec 2.0 for bytes.
         It also enable str8 type for unicode.
+    :param bool force_str_type:
+        Use str* encoding in place of bin* encoding. Also enable str8.
     """
     cdef msgpack_packer pk
     cdef object _default
@@ -82,12 +85,13 @@ cdef class Packer(object):
         self.pk.length = 0
 
     def __init__(self, default=None, encoding='utf-8', unicode_errors='strict',
-                 use_single_float=False, bint autoreset=1, bint use_bin_type=0):
+                 use_single_float=False, bint autoreset=1, bint use_bin_type=0, bint force_str_type=0):
         """
         """
         self.use_float = use_single_float
         self.autoreset = autoreset
         self.pk.use_bin_type = use_bin_type
+        self.pk.force_str_type = force_str_type
         if default is not None:
             if not PyCallable_Check(default):
                 raise TypeError("default must be a callable.")
