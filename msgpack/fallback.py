@@ -698,7 +698,7 @@ class Packer(object):
                 else:
                     raise PackValueError("Bytes is too large")
                 return self._buffer.write(obj)
-            if check(obj, (Unicode, bytes, memoryview)):
+            if check(obj, (Unicode, bytes, memoryview, str)):
                 if check(obj, Unicode):
                     if self._encoding is None:
                         raise TypeError(
@@ -759,7 +759,7 @@ class Packer(object):
                 obj = self._default(obj)
                 default_used = 1
                 continue
-            raise TypeError("Cannot serialize %r" % obj)
+            raise TypeError("Cannot serialize %r, type %s" % (obj, type(obj)))
 
     def pack(self, obj):
         self._pack(obj)
