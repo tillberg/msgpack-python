@@ -10,6 +10,11 @@ from msgpack.exceptions import PackValueError
 from msgpack import ExtType
 
 
+cdef extern from "Python.h":
+
+    int PyMemoryView_Check(object obj)
+
+
 cdef extern from "pack.h":
     struct msgpack_packer:
         char* buf
@@ -66,6 +71,13 @@ cdef class Packer(object):
         It also enable str8 type for unicode.
     :param bool force_str_type:
         Use str* encoding in place of bin* encoding. Also enable str8.
+    :param bool strict_types:
+        If set to true, types will be checked to be exact. Derived classes
+        from serializeable types will not be serialized and will be
+        treated as unsupported type and forwarded to default.
+        Additionally tuples will not be serialized as lists.
+        This is useful when trying to implement accurate serialization
+        for python types.
     """
     cdef msgpack_packer pk
     cdef object _default
@@ -73,6 +85,7 @@ cdef class Packer(object):
     cdef object _berrors
     cdef char *encoding
     cdef char *unicode_errors
+    cdef bint strict_types
     cdef bool use_float
     cdef bint autoreset
 
@@ -85,10 +98,12 @@ cdef class Packer(object):
         self.pk.length = 0
 
     def __init__(self, default=None, encoding='utf-8', unicode_errors='strict',
-                 use_single_float=False, bint autoreset=1, bint use_bin_type=0, bint force_str_type=0):
+                 use_single_float=False, bint autoreset=1, bint use_bin_type=0,
+                 bint strict_types=0, bint force_str_type=0):
         """
         """
         self.use_float = use_single_float
+        self.strict_types = strict_types
         self.autoreset = autoreset
         self.pk.use_bin_type = use_bin_type
         self.pk.force_str_type = force_str_type
@@ -125,6 +140,8 @@ cdef class Packer(object):
         cdef dict d
         cdef size_t L
         cdef int default_used = 0
+        cdef bint strict_types = self.strict_types
+        cdef Py_buffer view
 
         if nest_limit < 0:
             raise PackValueError("recursion limit exceeded.")
@@ -132,12 +149,12 @@ cdef class Packer(object):
         while True:
             if o is None:
                 ret = msgpack_pack_nil(&self.pk)
-            elif isinstance(o, bool):
+            elif PyBool_Check(o) if strict_types else isinstance(o, bool):
                 if o:
                     ret = msgpack_pack_true(&self.pk)
                 else:
                     ret = msgpack_pack_false(&self.pk)
-            elif PyLong_Check(o):
+            elif PyLong_CheckExact(o) if strict_types else PyLong_Check(o):
                 # PyInt_Check(long) is True for Python 3.
                 # So we should test long before int.
                 try:
@@ -154,17 +171,17 @@ cdef class Packer(object):
                         continue
                     else:
                         raise
-            elif PyInt_Check(o):
+            elif PyInt_CheckExact(o) if strict_types else PyInt_Check(o):
                 longval = o
                 ret = msgpack_pack_long(&self.pk, longval)
-            elif PyFloat_Check(o):
+            elif PyFloat_CheckExact(o) if strict_types else PyFloat_Check(o):
                 if self.use_float:
                    fval = o
                    ret = msgpack_pack_float(&self.pk, fval)
                 else:
                    dval = o
                    ret = msgpack_pack_double(&self.pk, dval)
-            elif PyBytes_Check(o):
+            elif PyBytes_CheckExact(o) if strict_types else PyBytes_Check(o):
                 L = len(o)
                 if L > (2**32)-1:
                     raise ValueError("bytes is too large")
@@ -172,17 +189,17 @@ cdef class Packer(object):
                 ret = msgpack_pack_bin(&self.pk, L)
                 if ret == 0:
                     ret = msgpack_pack_raw_body(&self.pk, rawval, L)
-            elif PyUnicode_Check(o):
+            elif PyUnicode_CheckExact(o) if strict_types else PyUnicode_Check(o):
                 if not self.encoding:
                     raise TypeError("Can't encode unicode string: no encoding is specified")
                 o = PyUnicode_AsEncodedString(o, self.encoding, self.unicode_errors)
                 L = len(o)
                 if L > (2**32)-1:
-                    raise ValueError("dict is too large")
+                    raise ValueError("unicode string is too large")
                 rawval = o
-                ret = msgpack_pack_raw(&self.pk, len(o))
+                ret = msgpack_pack_raw(&self.pk, L)
                 if ret == 0:
-                    ret = msgpack_pack_raw_body(&self.pk, rawval, len(o))
+                    ret = msgpack_pack_raw_body(&self.pk, rawval, L)
             elif PyDict_CheckExact(o):
                 d = <dict>o
                 L = len(d)
@@ -195,7 +212,7 @@ cdef class Packer(object):
                         if ret != 0: break
                         ret = self._pack(v, nest_limit-1)
                         if ret != 0: break
-            elif PyDict_Check(o):
+            elif not strict_types and PyDict_Check(o):
                 L = len(o)
                 if L > (2**32)-1:
                     raise ValueError("dict is too large")
@@ -206,7 +223,7 @@ cdef class Packer(object):
                         if ret != 0: break
                         ret = self._pack(v, nest_limit-1)
                         if ret != 0: break
-            elif isinstance(o, ExtType):
+            elif type(o) is ExtType if strict_types else isinstance(o, ExtType):
                 # This should be before Tuple because ExtType is namedtuple.
                 longval = o.code
                 rawval = o.data
@@ -215,7 +232,7 @@ cdef class Packer(object):
                     raise ValueError("EXT data is too large")
                 ret = msgpack_pack_ext(&self.pk, longval, L)
                 ret = msgpack_pack_raw_body(&self.pk, rawval, L)
-            elif PyTuple_Check(o) or PyList_Check(o):
+            elif PyList_CheckExact(o) if strict_types else (PyTuple_Check(o) or PyList_Check(o)):
                 L = len(o)
                 if L > (2**32)-1:
                     raise ValueError("list is too large")
@@ -224,6 +241,17 @@ cdef class Packer(object):
                     for v in o:
                         ret = self._pack(v, nest_limit-1)
                         if ret != 0: break
+            elif PyMemoryView_Check(o):
+                if PyObject_GetBuffer(o, &view, PyBUF_SIMPLE) != 0:
+                    raise ValueError("could not get buffer for memoryview")
+                L = view.len
+                if L > (2**32)-1:
+                    PyBuffer_Release(&view);
+                    raise ValueError("memoryview is too large")
+                ret = msgpack_pack_bin(&self.pk, L)
+                if ret == 0:
+                    ret = msgpack_pack_raw_body(&self.pk, <char*>view.buf, L)
+                PyBuffer_Release(&view);
             elif not default_used and self._default:
                 o = self._default(o)
                 default_used = 1
